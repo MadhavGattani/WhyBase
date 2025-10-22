@@ -1,0 +1,8 @@
+node_modules
+client/.next
+server/venv
+.env
+.env.example
+server/.env
+.DS_Store
+.vscode
