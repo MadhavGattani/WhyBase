@@ -1,3 +1,4 @@
+# server/app.py
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import os
@@ -42,22 +43,67 @@ def query():
 
 @app.route("/api/history", methods=["GET"])
 def history():
+    """
+    Query params:
+      - page (int, default 1)
+      - per_page (int, default 10, max 100)
+      - q (string, optional) -> search prompt/response (ILIKE %q%)
+    """
     sess = get_session()
     if not sess:
         return jsonify({"error": "DB not connected"}), 500
 
     try:
-        rows = sess.query(Query).order_by(Query.created_at.desc()).limit(10).all()
-        data = [
-            {"id": q.id, "prompt": q.prompt, "response": q.response, "created_at": q.created_at.isoformat()}
-            for q in rows
-        ]
-        return jsonify({"history": data})
-    except Exception as e:
-        print("[DB] Error fetching history:", e)
-        return jsonify({"error": str(e)}), 500
-    finally:
+        page = max(int(request.args.get("page", 1)), 1)
+        per_page = min(int(request.args.get("per_page", 10)), 100)
+    except ValueError:
+        page = 1
+        per_page = 10
+
+    search_q = request.args.get("q", "").strip()
+
+    query = sess.query(Query)
+    if search_q:
+        like = f"%{search_q}%"
+        # SQLAlchemy ILIKE for case-insensitive (Postgres)
+        query = query.filter((Query.prompt.ilike(like)) | (Query.response.ilike(like)))
+
+    total = query.count()
+    rows = query.order_by(Query.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+
+    data = [
+        {"id": q.id, "prompt": q.prompt, "response": q.response, "created_at": q.created_at.isoformat()}
+        for q in rows
+    ]
+    sess.close()
+
+    return jsonify({
+        "history": data,
+        "meta": {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page
+        }
+    })
+
+
+@app.route("/api/history/<int:item_id>", methods=["DELETE"])
+def delete_history(item_id):
+    sess = get_session()
+    if not sess:
+        return jsonify({"error": "DB not connected"}), 500
+    try:
+        row = sess.query(Query).filter(Query.id == item_id).first()
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        sess.delete(row)
+        sess.commit()
         sess.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        print("[DB] Error deleting:", e)
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
