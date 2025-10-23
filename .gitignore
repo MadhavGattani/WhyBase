@@ -6,3 +6,4 @@ server/venv
 server/.env
 .DS_Store
 .vscode
+__pycache__/
