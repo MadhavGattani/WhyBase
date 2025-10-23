@@ -1,38 +1,40 @@
+# server/api/db.py
 import os
-import psycopg2
-from psycopg2 import OperationalError
+from sqlalchemy import create_engine, Column, Integer, Text, DateTime, func
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.exc import OperationalError
 
-_conn = None
+Base = declarative_base()
+engine = None
+SessionLocal = None
+
+
+class Query(Base):
+    __tablename__ = "queries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    prompt = Column(Text, nullable=False)
+    response = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
 
 def init_db(db_url):
-    global _conn
+    global engine, SessionLocal
     if not db_url:
-        print("[db] No DATABASE_URL provided, skipping DB init.")
+        print("[DB] No DATABASE_URL provided, skipping DB init.")
         return
     try:
-        _conn = psycopg2.connect(db_url)
-        with _conn.cursor() as cur:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS queries (
-                id SERIAL PRIMARY KEY,
-                prompt TEXT,
-                response TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            """)
-            _conn.commit()
-        print("[db] Connected and ensured tables exist.")
+        engine = create_engine(db_url)
+        Base.metadata.create_all(bind=engine)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        print("[DB] Connected and initialized successfully.")
     except OperationalError as e:
-        _conn = None
-        print(f"[db] Could not connect to database: {e}. Continuing without DB (dev mode).")
+        print(f"[DB] Could not connect to database: {e}")
+        engine = None
+        SessionLocal = None
+
 
 def get_session():
-    class Sess:
-        def insert_query(self, prompt, response):
-            if not _conn:
-                print("[db] DB not connected — skipping insert.")
-                return
-            with _conn.cursor() as cur:
-                cur.execute("INSERT INTO queries (prompt, response) VALUES (%s, %s)", (prompt, response))
-                _conn.commit()
-    return Sess()
+    if not SessionLocal:
+        print("[DB] No database session available.")
+        return None
+    return SessionLocal()
