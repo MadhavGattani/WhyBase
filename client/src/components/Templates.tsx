@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useToast } from "./ToastProvider";
 
 type Template = { id: number; name: string; prompt: string; created_at?: string };
 
@@ -8,6 +9,7 @@ export default function Templates({ onUse }: { onUse: (prompt: string) => void }
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
+  const toast = useToast();
 
   useEffect(() => { fetchTemplates(); }, []);
 
@@ -18,25 +20,29 @@ export default function Templates({ onUse }: { onUse: (prompt: string) => void }
       const json = await res.json();
       setTemplates(json.templates ?? []);
     } catch (e) {
-      console.error(e);
+      toast.push("Failed to load templates", "error");
     } finally {
       setLoading(false);
     }
   }
 
   async function createTemplate() {
-    if (!name || !prompt) return alert("Provide name and prompt");
+    if (!name || !prompt) return toast.push("Provide name and prompt", "error");
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/templates`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, prompt }),
       });
-      if (!res.ok) throw new Error("Create failed");
+      if (!res.ok) {
+        const js = await res.json().catch(()=>({error:"create failed"}));
+        throw new Error(js.error || "Create failed");
+      }
       setName(""); setPrompt("");
+      toast.push("Template saved", "success");
       fetchTemplates();
     } catch (e: any) {
-      alert("Error: " + e.message);
+      toast.push("Error: " + e.message, "error");
     }
   }
 
@@ -45,9 +51,28 @@ export default function Templates({ onUse }: { onUse: (prompt: string) => void }
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/templates/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");
+      toast.push("Template deleted", "info");
       fetchTemplates();
     } catch (e: any) {
-      alert("Error: " + e.message);
+      toast.push("Error: " + e.message, "error");
+    }
+  }
+
+  async function saveEdit(t: Template, newName: string, newPrompt: string) {
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/templates/${t.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName, prompt: newPrompt }),
+      });
+      if (!res.ok) {
+        const js = await res.json().catch(()=>({error:"update failed"}));
+        throw new Error(js.error || "Update failed");
+      }
+      toast.push("Template updated", "success");
+      fetchTemplates();
+    } catch (e: any) {
+      toast.push("Error: " + e.message, "error");
     }
   }
 
@@ -73,23 +98,45 @@ export default function Templates({ onUse }: { onUse: (prompt: string) => void }
             <div className="space-y-3">
               {templates.length === 0 && <div className="text-sm text-white/60">No templates</div>}
               {templates.map(t => (
-                <div key={t.id} className="p-3 rounded bg-white/3">
-                  <div className="flex justify-between items-start gap-2">
-                    <div>
-                      <div className="font-medium">{t.name}</div>
-                      <div className="text-sm text-white/70 line-clamp-3">{t.prompt}</div>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <button onClick={()=>onUse(t.prompt)} className="px-2 py-1 rounded bg-white/10 text-sm">Use</button>
-                      <button onClick={()=>removeTemplate(t.id)} className="px-2 py-1 rounded bg-red-600/60 text-sm">Delete</button>
-                    </div>
-                  </div>
-                </div>
+                <TemplateRow key={t.id} t={t} onUse={onUse} onDelete={removeTemplate} onSave={saveEdit} />
               ))}
             </div>
           )}
         </div>
       </div>
     </section>
+  );
+}
+
+function TemplateRow({ t, onUse, onDelete, onSave }: any) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(t.name);
+  const [prompt, setPrompt] = useState(t.prompt);
+
+  return (
+    <div className="p-3 rounded bg-white/3">
+      {!editing ? (
+        <div className="flex justify-between items-start gap-2">
+          <div>
+            <div className="font-medium">{t.name}</div>
+            <div className="text-sm text-white/70 line-clamp-3">{t.prompt}</div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <button onClick={() => onUse(t.prompt)} className="px-2 py-1 rounded bg-white/10 text-sm">Use</button>
+            <button onClick={() => setEditing(true)} className="px-2 py-1 rounded bg-white/10 text-sm">Edit</button>
+            <button onClick={() => onDelete(t.id)} className="px-2 py-1 rounded bg-red-600/60 text-sm">Delete</button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <input value={name} onChange={(e)=>setName(e.target.value)} className="w-full p-2 rounded bg-white/5" />
+          <textarea value={prompt} onChange={(e)=>setPrompt(e.target.value)} className="w-full p-2 rounded bg-white/5 h-24" />
+          <div className="flex justify-end gap-2">
+            <button onClick={()=>{ onSave(t, name, prompt); setEditing(false); }} className="px-3 py-1 rounded bg-primary text-sm">Save</button>
+            <button onClick={()=>{ setName(t.name); setPrompt(t.prompt); setEditing(false); }} className="px-3 py-1 rounded bg-white/10 text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

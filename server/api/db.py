@@ -29,9 +29,6 @@ class Query(Base):
     created_at = Column(DateTime, default=func.now())
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    # relationship optional
-    # user = relationship("User")
-
 
 class Template(Base):
     __tablename__ = "templates"
@@ -63,7 +60,6 @@ def init_db(db_url):
         print("[DB] No DATABASE_URL provided, skipping DB init.")
         return
     try:
-        # ensure psycopg driver in URL or default to psycopg
         engine = create_engine(db_url)
         Base.metadata.create_all(bind=engine)
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -79,3 +75,32 @@ def get_session():
         print("[DB] No database session available.")
         return None
     return SessionLocal()
+
+
+# convenience helper to find or create a user by provider id
+def get_or_create_user(provider_id: str = None, email: str = None, display_name: str = None):
+    """
+    If provider_id present, try to find user by provider_id, else by email.
+    Creates a user record if none exists. Returns SQLAlchemy user instance.
+    """
+    sess = get_session()
+    if not sess:
+        return None
+    user = None
+    try:
+        if provider_id:
+            user = sess.query(User).filter(User.provider_id == provider_id).first()
+        if not user and email:
+            user = sess.query(User).filter(User.email == email).first()
+        if not user:
+            user = User(provider_id=provider_id, email=email, display_name=display_name)
+            sess.add(user)
+            sess.commit()
+            # refresh
+            sess.refresh(user)
+        sess.close()
+        return user
+    except Exception as e:
+        print("[DB] get_or_create_user error:", e)
+        sess.close()
+        return None

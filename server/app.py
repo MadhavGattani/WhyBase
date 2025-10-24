@@ -1,9 +1,9 @@
 # server/app.py
-from flask import Flask, request, jsonify, send_file, abort
+from flask import Flask, request, jsonify, send_file
 from dotenv import load_dotenv
 import os
 from api.ai import call_ai
-from api.db import init_db, get_session, Query, Template, UploadedFile
+from api.db import init_db, get_session, Query, Template, UploadedFile, get_or_create_user
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import csv
@@ -18,9 +18,31 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# config
 init_db(os.getenv("DATABASE_URL"))
+AUTH0_ENABLED = os.getenv("AUTH0_ENABLED", "false").lower() in ("1", "true", "yes")
+MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "10"))
 
+# --- Auth skeleton ---
+def extract_user_from_request():
+    """
+    Skeleton: if AUTH0_ENABLED is true, expect Authorization: Bearer <token>
+    We do NOT validate token here — replace with real JWT verification in production.
+    This function extracts a provider_id (the token string in this skeleton) and calls get_or_create_user.
+    """
+    if not AUTH0_ENABLED:
+        return None
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth.split(" ", 1)[1].strip()
+    # In a real implementation you would verify the JWT and extract the subject/email.
+    provider_id = token  # placeholder: treat token as provider_id in dev
+    # Optionally extract email/display_name from a decoded token
+    user = get_or_create_user(provider_id=provider_id, email=None, display_name=None)
+    return user
 
+# --- routes ---
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok"})
@@ -39,7 +61,8 @@ def query():
     sess = get_session()
     if sess:
         try:
-            q = Query(prompt=prompt, response=ai_resp)
+            user = extract_user_from_request()
+            q = Query(prompt=prompt, response=ai_resp, user_id=(user.id if user else None))
             sess.add(q)
             sess.commit()
             sess.close()
@@ -57,7 +80,12 @@ def templates():
         return jsonify({"error": "DB not connected"}), 500
 
     if request.method == "GET":
-        rows = sess.query(Template).order_by(Template.created_at.desc()).all()
+        # optional: filter by user if authenticated
+        user = extract_user_from_request()
+        query = sess.query(Template)
+        if user:
+            query = query.filter(Template.user_id == user.id)
+        rows = query.order_by(Template.created_at.desc()).all()
         data = [{"id": r.id, "name": r.name, "prompt": r.prompt, "created_at": r.created_at.isoformat()} for r in rows]
         sess.close()
         return jsonify({"templates": data})
@@ -69,7 +97,8 @@ def templates():
     if not name or not prompt:
         return jsonify({"error": "name and prompt required"}), 400
     try:
-        t = Template(name=name, prompt=prompt)
+        user = extract_user_from_request()
+        t = Template(name=name, prompt=prompt, user_id=(user.id if user else None))
         sess.add(t)
         sess.commit()
         res = {"id": t.id, "name": t.name, "prompt": t.prompt}
@@ -89,6 +118,12 @@ def template_modify(tid):
     if not t:
         sess.close()
         return jsonify({"error": "Not found"}), 404
+
+    # If user authenticated, prevent editing other users' templates
+    user = extract_user_from_request()
+    if user and t.user_id and t.user_id != user.id:
+        sess.close()
+        return jsonify({"error": "Forbidden"}), 403
 
     if request.method == "DELETE":
         try:
@@ -125,21 +160,28 @@ def upload_file():
     if f.filename == "":
         return jsonify({"error": "No selected file"}), 400
     filename = secure_filename(f.filename)
-    # optional: check extension
     if ALLOWED_EXT:
         ext = filename.rsplit(".", 1)[-1].lower()
         if ext not in ALLOWED_EXT:
             return jsonify({"error": "File type not allowed"}), 400
 
+    # enforce size limit (server side)
+    max_bytes = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    f.stream.seek(0, os.SEEK_END)
+    size = f.stream.tell()
+    f.stream.seek(0)
+    if size > max_bytes:
+        return jsonify({"error": f"File too large. Max {MAX_UPLOAD_SIZE_MB} MB allowed."}), 413
+
     stored_name = f"{int(os.times()[4]*1000)}_{filename}"
     stored_path = os.path.join(UPLOAD_DIR, stored_name)
     f.save(stored_path)
-    size = os.path.getsize(stored_path)
 
     sess = get_session()
     if sess:
         try:
-            uf = UploadedFile(filename=filename, stored_path=stored_path, content_type=f.mimetype, size=size)
+            user = extract_user_from_request()
+            uf = UploadedFile(filename=filename, stored_path=stored_path, content_type=f.mimetype, size=size, user_id=(user.id if user else None))
             sess.add(uf)
             sess.commit()
             res = {"id": uf.id, "filename": uf.filename, "size": uf.size}
@@ -149,6 +191,44 @@ def upload_file():
             print("[DB] Upload save error:", e)
             return jsonify({"error": str(e)}), 500
     return jsonify({"error": "DB not available"}), 500
+
+
+# list uploaded files with pagination
+@app.route("/api/uploads", methods=["GET"])
+def list_uploads():
+    sess = get_session()
+    if not sess:
+        return jsonify({"error": "DB not connected"}), 500
+    try:
+        page = max(int(request.args.get("page", 1)), 1)
+        per_page = min(int(request.args.get("per_page", 10)), 100)
+    except ValueError:
+        page = 1
+        per_page = 10
+
+    user = extract_user_from_request()
+    query = sess.query(UploadedFile)
+    if user:
+        query = query.filter(UploadedFile.user_id == user.id)
+
+    total = query.count()
+    rows = query.order_by(UploadedFile.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+
+    data = [
+        {
+            "id": r.id,
+            "filename": r.filename,
+            "size": r.size,
+            "content_type": r.content_type,
+            "created_at": r.created_at.isoformat()
+        }
+        for r in rows
+    ]
+    sess.close()
+    return jsonify({
+        "uploads": data,
+        "meta": {"page": page, "per_page": per_page, "total": total, "pages": (total + per_page - 1) // per_page}
+    })
 
 
 @app.route("/api/download/<int:file_id>", methods=["GET"])
