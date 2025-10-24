@@ -1,3 +1,4 @@
+// client/src/components/Editor.tsx
 "use client";
 import { useState, useEffect } from "react";
 
@@ -17,7 +18,7 @@ export default function Editor({
   }, [value]);
 
   return (
-    <div className="p-6">
+    <div className="p-6 bg-black/70 rounded-lg">
       <textarea
         value={local}
         onChange={(e) => {
@@ -25,12 +26,12 @@ export default function Editor({
           onChange(e.target.value);
         }}
         placeholder="Describe your task..."
-        className="w-full h-44 p-4 rounded-lg bg-white/5 placeholder:text-white/50"
+        className="w-full h-44 p-4 rounded-lg bg-white/5 placeholder:text-white/50 text-white"
       />
       <div className="flex justify-end mt-4 gap-2">
         <button
           onClick={onRun}
-          className="px-6 py-2 rounded-lg bg-primary hover:brightness-110"
+          className="px-6 py-2 rounded-lg bg-primary hover:brightness-110 text-white"
         >
           Run
         </button>
