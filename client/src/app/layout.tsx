@@ -2,11 +2,12 @@
 import "./globals.css";
 import { ToastProvider } from "../components/ToastProvider";
 import { AuthProvider } from "../components/AuthProvider";
+import { OrganizationProvider } from "../components/OrganizationProvider";
 import Header from "../components/Header";
 
 export const metadata = {
   title: "Loominal",
-  description: "Loominal - AI writing tool"
+  description: "Loominal - AI writing tool with organization management"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -15,8 +16,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <AuthProvider>
           <ToastProvider>
-            <Header />
-            {children}
+            <OrganizationProvider>
+              <Header />
+              {children}
+            </OrganizationProvider>
           </ToastProvider>
         </AuthProvider>
       </body>
