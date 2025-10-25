@@ -1,6 +1,8 @@
+// client/src/components/Upload.tsx
 "use client";
 import { useEffect, useState } from "react";
 import { useToast } from "./ToastProvider";
+import { useAuth } from "./AuthProvider";
 
 type UploadRec = { id: number; filename: string; size?: number; created_at?: string; content_type?: string };
 const DEFAULT_PER_PAGE = 6;
@@ -14,12 +16,19 @@ export default function Uploads() {
   const [preview, setPreview] = useState<UploadRec | null>(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
   const toast = useToast();
+  const { getToken } = useAuth();
+  const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
   useEffect(()=>{ fetchList(); }, [page]);
 
   async function fetchList() {
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/uploads?page=${page}&per_page=${DEFAULT_PER_PAGE}`);
+      const headers: any = {};
+      if (getToken) {
+        const token = await getToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(`${API}/api/uploads?page=${page}&per_page=${DEFAULT_PER_PAGE}`, { headers });
       if (!res.ok) throw new Error("Failed to list");
       const json = await res.json();
       setFiles(json.uploads ?? []);
@@ -39,7 +48,12 @@ export default function Uploads() {
     form.append("file", selected);
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/upload`, { method: "POST", body: form });
+      const headers: any = {};
+      if (getToken) {
+        const token = await getToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(`${API}/api/upload`, { method: "POST", body: form, headers });
       const js = await res.json();
       if (!res.ok) throw new Error(js.error || "Upload failed");
       toast.push("Uploaded", "success");
@@ -53,17 +67,19 @@ export default function Uploads() {
   }
 
   function download(id: number) {
-    const url = `${process.env.NEXT_PUBLIC_API_URL}/api/download/${id}`;
+    const url = `${API}/api/download/${id}`;
     window.open(url, "_blank");
   }
 
   async function openPreview(rec: UploadRec) {
     setPreview(rec);
     setPreviewText(null);
-    // if text/plain or similar, fetch text
     if (rec.content_type && rec.content_type.startsWith("text")) {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/download/${rec.id}`);
+        const token = getToken ? await getToken() : null;
+        const headers: any = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${API}/api/download/${rec.id}`, { headers });
         const txt = await res.text();
         setPreviewText(txt);
       } catch (e) {
@@ -73,13 +89,13 @@ export default function Uploads() {
   }
 
   return (
-    <section className="p-6 mt-6 border-t border-white/10">
+    <section className="p-6 mt-6 border-t border-white/10 text-white">
       <h3 className="text-lg font-semibold mb-3">Upload File</h3>
       <div className="p-4 rounded bg-white/3">
         <div className="flex items-center gap-4">
           <input type="file" onChange={e=>setSelected(e.target.files?.[0]??null)} />
           <div className="flex gap-2">
-            <button onClick={doUpload} disabled={!selected || loading} className="px-3 py-2 rounded bg-primary">Upload</button>
+            <button onClick={doUpload} disabled={!selected || loading} className="px-3 py-2 rounded bg-primary text-white">Upload</button>
             <button onClick={()=>setSelected(null)} className="px-3 py-2 rounded bg-white/10">Clear</button>
           </div>
         </div>
@@ -91,7 +107,7 @@ export default function Uploads() {
             {files.map(f => (
               <div key={f.id} className="flex items-center justify-between p-2 rounded bg-white/5">
                 <div>
-                  <div className="font-medium">{f.filename}</div>
+                  <div className="font-medium text-white">{f.filename}</div>
                   <div className="text-xs text-white/60">{f.size ? `${f.size} bytes` : ""} {f.created_at ? ` • ${new Date(f.created_at).toLocaleString()}` : ""}</div>
                 </div>
                 <div className="flex gap-2">
@@ -112,11 +128,10 @@ export default function Uploads() {
         </div>
       </div>
 
-      {/* Preview modal */}
       {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={()=>{setPreview(null); setPreviewText(null);}}></div>
-          <div className="relative max-w-3xl w-full mx-4 bg-surface/90 p-6 rounded-2xl">
+          <div className="relative max-w-3xl w-full mx-4 bg-surface/90 p-6 rounded-2xl text-white">
             <div className="flex justify-between items-start gap-4">
               <h4 className="text-lg font-semibold">{preview.filename}</h4>
               <button onClick={()=>{setPreview(null); setPreviewText(null);}} className="text-sm px-2 py-1 bg-white/8 rounded">Close</button>
@@ -125,7 +140,7 @@ export default function Uploads() {
               {preview.content_type && preview.content_type.startsWith("text") ? (
                 <pre className="whitespace-pre-wrap max-h-96 overflow-auto bg-white/3 p-3 rounded">{previewText ?? "Loading..."}</pre>
               ) : preview.content_type === "application/pdf" || preview.filename.toLowerCase().endsWith(".pdf") ? (
-                <iframe src={`${process.env.NEXT_PUBLIC_API_URL}/api/download/${preview.id}`} className="w-full h-[70vh]" title="PDF preview"></iframe>
+                <iframe src={`${API}/api/download/${preview.id}`} className="w-full h-[70vh]" title="PDF preview"></iframe>
               ) : (
                 <div className="text-sm">No preview available for this file type. Use Download to get the file.</div>
               )}
