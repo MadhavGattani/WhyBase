@@ -1,6 +1,7 @@
 # server/app.py
 
 import os
+<<<<<<< HEAD
 import json
 import math
 from flask import Flask, request, jsonify, send_file
@@ -14,6 +15,12 @@ from io import StringIO
 from api.auth import requires_auth
 from api.db import init_db, get_session, Query, Template, UploadedFile, User, get_or_create_user
 from api.ai import call_ai
+=======
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from dotenv import load_dotenv
+from api.auth import requires_auth
+>>>>>>> d0678fe (chore: push all project files to GitHub)
 
 # Load environment variables
 load_dotenv()
@@ -22,6 +29,7 @@ AUTH0_ENABLED = os.getenv("AUTH0_ENABLED", "false").lower() == "true"
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
 DATABASE_URL = os.getenv("DATABASE_URL")
+<<<<<<< HEAD
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
 
@@ -48,6 +56,12 @@ def get_current_user():
     name = user_data.get("name") or user_data.get("nickname")
     
     return get_or_create_user(provider_id=provider_id, email=email, display_name=name)
+=======
+
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+>>>>>>> d0678fe (chore: push all project files to GitHub)
 
 @app.route("/health")
 def health():
@@ -55,6 +69,7 @@ def health():
         "status": "ok",
         "auth_enabled": AUTH0_ENABLED,
         "domain": AUTH0_DOMAIN,
+<<<<<<< HEAD
         "audience": AUTH0_AUDIENCE,
         "database_connected": get_session() is not None
     })
@@ -271,9 +286,64 @@ def template_detail_unprotected(template_id):
     except Exception as e:
         session.close()
         return jsonify({"error": str(e)}), 500
+=======
+        "audience": AUTH0_AUDIENCE
+    })
+
+
+@app.route("/api/public")
+def public():
+    return jsonify({
+        "message": "This is a public endpoint — no auth required."
+    })
+
+
+@app.route("/api/protected")
+@requires_auth
+def protected():
+    user = getattr(request, "user", None)
+    sub = user.get("sub") if user else None
+    email = user.get("email") if user else None
+
+    return jsonify({
+        "message": "You accessed a protected endpoint!",
+        "user_sub": sub,
+        "email": email
+    })
+
+
+@app.route("/api/templates", methods=["GET", "POST"])
+def templates():
+    if request.method == "GET":
+        return jsonify({
+            "templates": [
+                {"id": 1, "title": "Welcome Template", "prompt": "Write an intro paragraph"},
+                {"id": 2, "title": "Product Template", "prompt": "Describe a product in 50 words"}
+            ]
+        })
+
+    elif request.method == "POST":
+        if AUTH0_ENABLED:
+            return _create_template_protected()
+        else:
+            data = request.get_json() or {}
+            data["created_by"] = "local-debug-user"
+            return jsonify({"ok": True, "template": data}), 201
+
+
+@requires_auth
+def _create_template_protected():
+    data = request.get_json() or {}
+    user = getattr(request, "user", {})
+    data["created_by"] = user.get("sub")
+    return jsonify({"ok": True, "template": data}), 201
+
+>>>>>>> d0678fe (chore: push all project files to GitHub)
 
 @app.route("/api/upload", methods=["POST"])
+@requires_auth
 def upload_file():
+<<<<<<< HEAD
     """Upload a file"""
     if AUTH0_ENABLED:
         return upload_file_protected()
@@ -285,6 +355,8 @@ def upload_file_protected():
     return upload_file_unprotected()
 
 def upload_file_unprotected():
+=======
+>>>>>>> d0678fe (chore: push all project files to GitHub)
     if "file" not in request.files:
         return jsonify({"error": "No file part in request"}), 400
 
@@ -292,6 +364,7 @@ def upload_file_unprotected():
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
 
+<<<<<<< HEAD
     filename = secure_filename(file.filename)
     if not filename:
         return jsonify({"error": "Invalid filename"}), 400
@@ -513,18 +586,47 @@ def unauthorized(e):
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "Not found"}), 404
+=======
+    upload_dir = os.path.join(os.getcwd(), "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    path = os.path.join(upload_dir, file.filename)
+    file.save(path)
+
+    return jsonify({
+        "message": "File uploaded successfully",
+        "filename": file.filename
+    }), 201
+
+
+@app.errorhandler(401)
+def unauthorized(e):
+    return jsonify({"error": "Unauthorized"}), 401
+
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Not found"}), 404
+
+>>>>>>> d0678fe (chore: push all project files to GitHub)
 
 @app.errorhandler(500)
 def server_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
+<<<<<<< HEAD
 @app.errorhandler(413)
 def file_too_large(e):
     return jsonify({"error": "File too large"}), 413
+=======
+>>>>>>> d0678fe (chore: push all project files to GitHub)
 
 if __name__ == "__main__":
     print("Starting Loominal Flask API Server 🚀")
     print(f"Auth0 Enabled: {AUTH0_ENABLED}")
+<<<<<<< HEAD
     print(f"Database URL: {DATABASE_URL}")
     print(f"Upload Folder: {UPLOAD_FOLDER}")
     app.run(host="0.0.0.0", port=5000, debug=True)
+=======
+    app.run(host="0.0.0.0", port=5000, debug=True)
+>>>>>>> d0678fe (chore: push all project files to GitHub)
