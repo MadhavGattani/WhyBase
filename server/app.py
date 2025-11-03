@@ -1,26 +1,25 @@
 # server/app.py
 
 import os
-<<<<<<< HEAD
 import json
 import math
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
-from datetime import datetime
+from datetime import datetime, timedelta
 import csv
 from io import StringIO
+import secrets
 
 from api.auth import requires_auth
-from api.db import init_db, get_session, Query, Template, UploadedFile, User, get_or_create_user
+from api.db import (
+    init_db, get_session, Query, Template, UploadedFile, User, 
+    Organization, OrganizationInvitation, OrganizationRole, InvitationStatus,
+    get_or_create_user, add_user_to_organization, remove_user_from_organization,
+    user_organization_memberships
+)
 from api.ai import call_ai
-=======
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from dotenv import load_dotenv
-from api.auth import requires_auth
->>>>>>> d0678fe (chore: push all project files to GitHub)
 
 # Load environment variables
 load_dotenv()
@@ -29,12 +28,22 @@ AUTH0_ENABLED = os.getenv("AUTH0_ENABLED", "false").lower() == "true"
 AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
 DATABASE_URL = os.getenv("DATABASE_URL")
-<<<<<<< HEAD
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Configure CORS to allow frontend access
+CORS(app, resources={
+    r"/*": {
+        "origins": ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Organization-Id"],
+        "expose_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
+
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_SIZE
 
 # Initialize database
@@ -46,7 +55,21 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 def get_current_user():
     """Get current user from request context"""
     if not AUTH0_ENABLED:
+        # Return a mock user for development without Auth0
+        session = get_session()
+        if session:
+            # Get or create a default user for development
+            user = session.query(User).filter(User.email == "dev@localhost").first()
+            if not user:
+                user = get_or_create_user(
+                    provider_id="dev-user-1",
+                    email="dev@localhost",
+                    display_name="Development User"
+                )
+            session.close()
+            return user
         return None
+    
     user_data = getattr(request, "user", None)
     if not user_data:
         return None
@@ -54,14 +77,40 @@ def get_current_user():
     provider_id = user_data.get("sub")
     email = user_data.get("email")
     name = user_data.get("name") or user_data.get("nickname")
+    picture = user_data.get("picture")
     
-    return get_or_create_user(provider_id=provider_id, email=email, display_name=name)
-=======
+    user = get_or_create_user(provider_id=provider_id, email=email, display_name=name)
+    
+    # Update avatar if provided
+    if user and picture and not user.avatar_url:
+        session = get_session()
+        if session:
+            try:
+                user.avatar_url = picture
+                session.commit()
+                session.close()
+            except:
+                session.close()
+    
+    return user
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
-
->>>>>>> d0678fe (chore: push all project files to GitHub)
+def get_user_organization():
+    """Get the current organization context from request headers"""
+    org_id = request.headers.get("X-Organization-Id")
+    if not org_id:
+        return None
+    
+    try:
+        org_id = int(org_id)
+        session = get_session()
+        if not session:
+            return None
+        
+        org = session.query(Organization).filter(Organization.id == org_id).first()
+        session.close()
+        return org
+    except:
+        return None
 
 @app.route("/health")
 def health():
@@ -69,10 +118,13 @@ def health():
         "status": "ok",
         "auth_enabled": AUTH0_ENABLED,
         "domain": AUTH0_DOMAIN,
-<<<<<<< HEAD
         "audience": AUTH0_AUDIENCE,
         "database_connected": get_session() is not None
     })
+
+# ======================
+# AI Query Endpoints
+# ======================
 
 @app.route("/api/query", methods=["POST"])
 def query_ai():
@@ -92,10 +144,13 @@ def query_ai():
         if session:
             try:
                 current_user = get_current_user() if AUTH0_ENABLED else None
+                current_org = get_user_organization()
+                
                 query_record = Query(
                     prompt=prompt,
                     response=response,
-                    user_id=current_user.id if current_user else None
+                    user_id=current_user.id if current_user else None,
+                    organization_id=current_org.id if current_org else (current_user.personal_organization_id if current_user else None)
                 )
                 session.add(query_record)
                 session.commit()
@@ -118,10 +173,15 @@ def get_queries():
     
     try:
         current_user = get_current_user() if AUTH0_ENABLED else None
+        current_org = get_user_organization()
         
         query = session.query(Query)
+        
         if AUTH0_ENABLED and current_user:
-            query = query.filter(Query.user_id == current_user.id)
+            if current_org:
+                query = query.filter(Query.organization_id == current_org.id)
+            else:
+                query = query.filter(Query.user_id == current_user.id)
         
         queries = query.order_by(Query.created_at.desc()).limit(20).all()
         
@@ -140,6 +200,10 @@ def get_queries():
     except Exception as e:
         session.close()
         return jsonify({"error": str(e)}), 500
+
+# ======================
+# Template Endpoints
+# ======================
 
 @app.route("/api/templates", methods=["GET", "POST"])
 def templates():
@@ -160,21 +224,27 @@ def get_templates():
     
     try:
         current_user = get_current_user() if AUTH0_ENABLED else None
+        current_org = get_user_organization()
         
         query = session.query(Template)
+        
         if AUTH0_ENABLED and current_user:
-            query = query.filter(Template.user_id == current_user.id)
+            if current_org:
+                # Get organization templates and user's personal templates
+                query = query.filter(
+                    (Template.organization_id == current_org.id) |
+                    (Template.user_id == current_user.id) |
+                    (Template.is_public == True)
+                )
+            else:
+                # Get user's templates
+                query = query.filter(Template.user_id == current_user.id)
         
         templates = query.order_by(Template.created_at.desc()).all()
         
         result = []
         for t in templates:
-            result.append({
-                "id": t.id,
-                "name": t.name,
-                "prompt": t.prompt,
-                "created_at": t.created_at.isoformat() if t.created_at else None
-            })
+            result.append(t.to_dict())
         
         session.close()
         return jsonify({"templates": result})
@@ -192,6 +262,8 @@ def create_template():
     data = request.get_json() or {}
     name = data.get("name", "").strip()
     prompt = data.get("prompt", "").strip()
+    description = data.get("description", "").strip()
+    is_organization_template = data.get("is_organization_template", False)
     
     if not name or not prompt:
         return jsonify({"error": "Name and prompt are required"}), 400
@@ -202,21 +274,20 @@ def create_template():
     
     try:
         current_user = get_current_user() if AUTH0_ENABLED else None
+        current_org = get_user_organization()
         
         template = Template(
             name=name,
             prompt=prompt,
-            user_id=current_user.id if current_user else None
+            description=description if description else None,
+            user_id=current_user.id if current_user else None,
+            organization_id=current_org.id if current_org else (current_user.personal_organization_id if current_user else None),
+            is_organization_template=is_organization_template
         )
         session.add(template)
         session.commit()
         
-        result = {
-            "id": template.id,
-            "name": template.name,
-            "prompt": template.prompt,
-            "created_at": template.created_at.isoformat() if template.created_at else None
-        }
+        result = template.to_dict()
         
         session.close()
         return jsonify({"template": result}), 201
@@ -265,14 +336,11 @@ def template_detail_unprotected(template_id):
             
             template.name = name
             template.prompt = prompt
+            if "description" in data:
+                template.description = data.get("description", "").strip() or None
             session.commit()
             
-            result = {
-                "id": template.id,
-                "name": template.name,
-                "prompt": template.prompt,
-                "created_at": template.created_at.isoformat() if template.created_at else None
-            }
+            result = template.to_dict()
             
             session.close()
             return jsonify({"template": result})
@@ -286,77 +354,20 @@ def template_detail_unprotected(template_id):
     except Exception as e:
         session.close()
         return jsonify({"error": str(e)}), 500
-=======
-        "audience": AUTH0_AUDIENCE
-    })
 
-
-@app.route("/api/public")
-def public():
-    return jsonify({
-        "message": "This is a public endpoint — no auth required."
-    })
-
-
-@app.route("/api/protected")
-@requires_auth
-def protected():
-    user = getattr(request, "user", None)
-    sub = user.get("sub") if user else None
-    email = user.get("email") if user else None
-
-    return jsonify({
-        "message": "You accessed a protected endpoint!",
-        "user_sub": sub,
-        "email": email
-    })
-
-
-@app.route("/api/templates", methods=["GET", "POST"])
-def templates():
-    if request.method == "GET":
-        return jsonify({
-            "templates": [
-                {"id": 1, "title": "Welcome Template", "prompt": "Write an intro paragraph"},
-                {"id": 2, "title": "Product Template", "prompt": "Describe a product in 50 words"}
-            ]
-        })
-
-    elif request.method == "POST":
-        if AUTH0_ENABLED:
-            return _create_template_protected()
-        else:
-            data = request.get_json() or {}
-            data["created_by"] = "local-debug-user"
-            return jsonify({"ok": True, "template": data}), 201
-
-
-@requires_auth
-def _create_template_protected():
-    data = request.get_json() or {}
-    user = getattr(request, "user", {})
-    data["created_by"] = user.get("sub")
-    return jsonify({"ok": True, "template": data}), 201
-
->>>>>>> d0678fe (chore: push all project files to GitHub)
+# ======================
+# Upload Endpoints
+# ======================
 
 @app.route("/api/upload", methods=["POST"])
-@requires_auth
 def upload_file():
-<<<<<<< HEAD
     """Upload a file"""
     if AUTH0_ENABLED:
-        return upload_file_protected()
-    else:
-        return upload_file_unprotected()
-
-@requires_auth
-def upload_file_protected():
-    return upload_file_unprotected()
-
-def upload_file_unprotected():
-=======
->>>>>>> d0678fe (chore: push all project files to GitHub)
+        # Require auth for uploads
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
     if "file" not in request.files:
         return jsonify({"error": "No file part in request"}), 400
 
@@ -364,7 +375,6 @@ def upload_file_unprotected():
     if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
 
-<<<<<<< HEAD
     filename = secure_filename(file.filename)
     if not filename:
         return jsonify({"error": "Invalid filename"}), 400
@@ -383,13 +393,15 @@ def upload_file_unprotected():
         if session:
             try:
                 current_user = get_current_user() if AUTH0_ENABLED else None
+                current_org = get_user_organization()
                 
                 upload_record = UploadedFile(
                     filename=filename,
                     stored_path=filepath,
                     content_type=file.content_type,
                     size=file_size,
-                    user_id=current_user.id if current_user else None
+                    user_id=current_user.id if current_user else None,
+                    organization_id=current_org.id if current_org else (current_user.personal_organization_id if current_user else None)
                 )
                 session.add(upload_record)
                 session.commit()
@@ -427,13 +439,18 @@ def get_uploads():
     
     try:
         current_user = get_current_user() if AUTH0_ENABLED else None
+        current_org = get_user_organization()
         
         page = int(request.args.get("page", 1))
         per_page = int(request.args.get("per_page", 10))
         
         query = session.query(UploadedFile)
+        
         if AUTH0_ENABLED and current_user:
-            query = query.filter(UploadedFile.user_id == current_user.id)
+            if current_org:
+                query = query.filter(UploadedFile.organization_id == current_org.id)
+            else:
+                query = query.filter(UploadedFile.user_id == current_user.id)
         
         total = query.count()
         pages = math.ceil(total / per_page) if total > 0 else 1
@@ -492,6 +509,502 @@ def download_file(file_id):
         session.close()
         return jsonify({"error": str(e)}), 500
 
+# ======================
+# Organization Endpoints
+# ======================
+
+@app.route("/api/organizations", methods=["GET", "POST"])
+def organizations():
+    """Organization management"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    if request.method == "GET":
+        return get_organizations()
+    elif request.method == "POST":
+        return create_organization()
+
+def get_organizations():
+    """Get user's organizations"""
+    session = get_session()
+    if not session:
+        return jsonify({"organizations": []})
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Get all organizations user is a member of
+        from sqlalchemy import and_
+        
+        # Get organization IDs where user is a member
+        membership_query = session.query(user_organization_memberships.c.organization_id).filter(
+            and_(
+                user_organization_memberships.c.user_id == current_user.id,
+                user_organization_memberships.c.is_active == True
+            )
+        )
+        
+        org_ids = [row[0] for row in membership_query.all()]
+        
+        # Get organization details
+        orgs = session.query(Organization).filter(Organization.id.in_(org_ids)).all()
+        
+        result = [org.to_dict() for org in orgs]
+        
+        session.close()
+        return jsonify({"organizations": result})
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+def create_organization():
+    """Create a new organization"""
+    data = request.get_json() or {}
+    name = data.get("name", "").strip()
+    slug = data.get("slug", "").strip()
+    description = data.get("description", "").strip()
+    website = data.get("website", "").strip()
+    plan_type = data.get("plan_type", "free")
+    
+    if not name or not slug:
+        return jsonify({"error": "Name and slug are required"}), 400
+    
+    session = get_session()
+    if not session:
+        return jsonify({"error": "Database not available"}), 500
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if slug is already taken
+        existing = session.query(Organization).filter(Organization.slug == slug).first()
+        if existing:
+            session.close()
+            return jsonify({"error": "Slug already taken"}), 400
+        
+        # Create organization
+        org = Organization(
+            name=name,
+            slug=slug,
+            description=description if description else None,
+            website=website if website else None,
+            plan_type=plan_type,
+            owner_id=current_user.id,
+            is_personal=False
+        )
+        
+        session.add(org)
+        session.flush()  # Get org ID
+        
+        # Add creator as owner member
+        from sqlalchemy import insert
+        stmt = insert(user_organization_memberships).values(
+            user_id=current_user.id,
+            organization_id=org.id,
+            role=OrganizationRole.OWNER
+        )
+        session.execute(stmt)
+        
+        session.commit()
+        
+        result = org.to_dict()
+        
+        session.close()
+        return jsonify({"organization": result}), 201
+        
+    except Exception as e:
+        session.rollback()
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/organizations/<int:org_id>", methods=["GET", "PUT", "DELETE"])
+def organization_detail(org_id):
+    """Get, update, or delete organization"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    if not session:
+        return jsonify({"error": "Database not available"}), 500
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        org = session.query(Organization).filter(Organization.id == org_id).first()
+        if not org:
+            session.close()
+            return jsonify({"error": "Organization not found"}), 404
+        
+        # Check if user has access
+        user_role = current_user.get_role_in_organization(org_id)
+        if not user_role:
+            session.close()
+            return jsonify({"error": "Access denied"}), 403
+        
+        if request.method == "GET":
+            result = org.to_dict()
+            session.close()
+            return jsonify({"organization": result})
+        
+        elif request.method == "PUT":
+            # Only admins and owners can update
+            if user_role not in [OrganizationRole.OWNER, OrganizationRole.ADMIN]:
+                session.close()
+                return jsonify({"error": "Insufficient permissions"}), 403
+            
+            data = request.get_json() or {}
+            
+            if "name" in data:
+                org.name = data["name"].strip()
+            if "description" in data:
+                org.description = data["description"].strip() or None
+            if "website" in data:
+                org.website = data["website"].strip() or None
+            if "max_members" in data and user_role == OrganizationRole.OWNER:
+                org.max_members = int(data["max_members"])
+            
+            session.commit()
+            result = org.to_dict()
+            
+            session.close()
+            return jsonify({"organization": result})
+        
+        elif request.method == "DELETE":
+            # Only owners can delete
+            if user_role != OrganizationRole.OWNER:
+                session.close()
+                return jsonify({"error": "Only owners can delete organizations"}), 403
+            
+            if org.is_personal:
+                session.close()
+                return jsonify({"error": "Cannot delete personal organization"}), 400
+            
+            session.delete(org)
+            session.commit()
+            session.close()
+            return jsonify({"message": "Organization deleted"})
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/organizations/<int:org_id>/members", methods=["GET"])
+def get_organization_members(org_id):
+    """Get organization members"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    if not session:
+        return jsonify({"members": []})
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if user has access
+        user_role = current_user.get_role_in_organization(org_id)
+        if not user_role:
+            session.close()
+            return jsonify({"error": "Access denied"}), 403
+        
+        # Get members
+        from sqlalchemy import and_
+        members_data = session.query(
+            User, user_organization_memberships.c.role, user_organization_memberships.c.joined_at
+        ).join(
+            user_organization_memberships,
+            User.id == user_organization_memberships.c.user_id
+        ).filter(
+            and_(
+                user_organization_memberships.c.organization_id == org_id,
+                user_organization_memberships.c.is_active == True
+            )
+        ).all()
+        
+        result = []
+        for user, role, joined_at in members_data:
+            result.append({
+                "id": user.id,
+                "email": user.email,
+                "display_name": user.display_name,
+                "avatar_url": user.avatar_url,
+                "role": role.value if hasattr(role, 'value') else role,
+                "joined_at": joined_at.isoformat() if joined_at else None,
+                "is_active": True
+            })
+        
+        session.close()
+        return jsonify({"members": result})
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/organizations/<int:org_id>/members/<int:member_id>", methods=["PUT", "DELETE"])
+def manage_organization_member(org_id, member_id):
+    """Update or remove organization member"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    if not session:
+        return jsonify({"error": "Database not available"}), 500
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if user has admin/owner access
+        user_role = current_user.get_role_in_organization(org_id)
+        if user_role not in [OrganizationRole.OWNER, OrganizationRole.ADMIN]:
+            session.close()
+            return jsonify({"error": "Insufficient permissions"}), 403
+        
+        if request.method == "PUT":
+            # Update member role
+            data = request.get_json() or {}
+            new_role = data.get("role")
+            
+            if not new_role:
+                session.close()
+                return jsonify({"error": "Role is required"}), 400
+            
+            try:
+                role_enum = OrganizationRole(new_role)
+            except ValueError:
+                session.close()
+                return jsonify({"error": "Invalid role"}), 400
+            
+            # Can't change owner role unless you're the owner
+            if role_enum == OrganizationRole.OWNER and user_role != OrganizationRole.OWNER:
+                session.close()
+                return jsonify({"error": "Only owners can assign owner role"}), 403
+            
+            from sqlalchemy import update, and_
+            stmt = update(user_organization_memberships).where(
+                and_(
+                    user_organization_memberships.c.user_id == member_id,
+                    user_organization_memberships.c.organization_id == org_id
+                )
+            ).values(role=role_enum)
+            
+            session.execute(stmt)
+            session.commit()
+            session.close()
+            return jsonify({"message": "Member role updated"})
+        
+        elif request.method == "DELETE":
+            # Remove member
+            success = remove_user_from_organization(member_id, org_id)
+            if success:
+                return jsonify({"message": "Member removed"})
+            else:
+                return jsonify({"error": "Failed to remove member"}), 500
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/organizations/<int:org_id>/invite", methods=["POST"])
+def invite_to_organization(org_id):
+    """Invite user to organization"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    if not session:
+        return jsonify({"error": "Database not available"}), 500
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if user has admin/owner access
+        user_role = current_user.get_role_in_organization(org_id)
+        if user_role not in [OrganizationRole.OWNER, OrganizationRole.ADMIN]:
+            session.close()
+            return jsonify({"error": "Insufficient permissions"}), 403
+        
+        data = request.get_json() or {}
+        email = data.get("email", "").strip()
+        role = data.get("role", "member")
+        message = data.get("message", "").strip()
+        
+        if not email:
+            session.close()
+            return jsonify({"error": "Email is required"}), 400
+        
+        try:
+            role_enum = OrganizationRole(role)
+        except ValueError:
+            session.close()
+            return jsonify({"error": "Invalid role"}), 400
+        
+        # Check if organization can add more members
+        org = session.query(Organization).filter(Organization.id == org_id).first()
+        if not org.can_add_member():
+            session.close()
+            return jsonify({"error": "Organization has reached maximum member limit"}), 400
+        
+        # Check if user already has a pending invitation
+        existing_invite = session.query(OrganizationInvitation).filter(
+            OrganizationInvitation.organization_id == org_id,
+            OrganizationInvitation.email == email,
+            OrganizationInvitation.status == InvitationStatus.PENDING
+        ).first()
+        
+        if existing_invite:
+            session.close()
+            return jsonify({"error": "Invitation already sent to this email"}), 400
+        
+        # Find if invited user exists
+        invited_user = session.query(User).filter(User.email == email).first()
+        
+        # Create invitation
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(days=7)
+        
+        invitation = OrganizationInvitation(
+            organization_id=org_id,
+            role=role_enum,
+            email=email,
+            invited_user_id=invited_user.id if invited_user else None,
+            token=token,
+            invited_by_id=current_user.id,
+            message=message if message else None,
+            expires_at=expires_at
+        )
+        
+        session.add(invitation)
+        session.commit()
+        
+        result = invitation.to_dict()
+        
+        session.close()
+        return jsonify({"invitation": result}), 201
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/organizations/<int:org_id>/invitations", methods=["GET"])
+def get_organization_invitations(org_id):
+    """Get organization invitations"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    if not session:
+        return jsonify({"invitations": []})
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if user has access
+        user_role = current_user.get_role_in_organization(org_id)
+        if not user_role:
+            session.close()
+            return jsonify({"error": "Access denied"}), 403
+        
+        invitations = session.query(OrganizationInvitation).filter(
+            OrganizationInvitation.organization_id == org_id
+        ).order_by(OrganizationInvitation.created_at.desc()).all()
+        
+        result = [inv.to_dict() for inv in invitations]
+        
+        session.close()
+        return jsonify({"invitations": result})
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/organizations/<int:org_id>/invitations/<int:invitation_id>", methods=["DELETE"])
+def revoke_invitation(org_id, invitation_id):
+    """Revoke organization invitation"""
+    # Only require auth if AUTH0 is enabled
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    if not session:
+        return jsonify({"error": "Database not available"}), 500
+    
+    try:
+        current_user = get_current_user()
+        if not current_user:
+            session.close()
+            return jsonify({"error": "User not found"}), 404
+        
+        # Check if user has admin/owner access
+        user_role = current_user.get_role_in_organization(org_id)
+        if user_role not in [OrganizationRole.OWNER, OrganizationRole.ADMIN]:
+            session.close()
+            return jsonify({"error": "Insufficient permissions"}), 403
+        
+        invitation = session.query(OrganizationInvitation).filter(
+            OrganizationInvitation.id == invitation_id,
+            OrganizationInvitation.organization_id == org_id
+        ).first()
+        
+        if not invitation:
+            session.close()
+            return jsonify({"error": "Invitation not found"}), 404
+        
+        invitation.status = InvitationStatus.EXPIRED
+        session.commit()
+        session.close()
+        
+        return jsonify({"message": "Invitation revoked"})
+        
+    except Exception as e:
+        session.close()
+        return jsonify({"error": str(e)}), 500
+
+# ======================
+# Export Endpoint
+# ======================
+
 @app.route("/api/export")
 def export_data():
     """Export user data"""
@@ -503,17 +1016,24 @@ def export_data():
     
     try:
         current_user = get_current_user() if AUTH0_ENABLED else None
+        current_org = get_user_organization()
         
         # Get queries
         query_q = session.query(Query)
         if AUTH0_ENABLED and current_user:
-            query_q = query_q.filter(Query.user_id == current_user.id)
+            if current_org:
+                query_q = query_q.filter(Query.organization_id == current_org.id)
+            else:
+                query_q = query_q.filter(Query.user_id == current_user.id)
         queries = query_q.order_by(Query.created_at.desc()).all()
         
         # Get templates
         template_q = session.query(Template)
         if AUTH0_ENABLED and current_user:
-            template_q = template_q.filter(Template.user_id == current_user.id)
+            if current_org:
+                template_q = template_q.filter(Template.organization_id == current_org.id)
+            else:
+                template_q = template_q.filter(Template.user_id == current_user.id)
         templates = template_q.order_by(Template.created_at.desc()).all()
         
         session.close()
@@ -564,13 +1084,7 @@ def export_data():
                     for q in queries
                 ],
                 "templates": [
-                    {
-                        "id": t.id,
-                        "name": t.name,
-                        "prompt": t.prompt,
-                        "created_at": t.created_at.isoformat() if t.created_at else None
-                    }
-                    for t in templates
+                    t.to_dict() for t in templates
                 ]
             }
             return jsonify(data)
@@ -579,6 +1093,10 @@ def export_data():
         session.close()
         return jsonify({"error": str(e)}), 500
 
+# ======================
+# Error Handlers
+# ======================
+
 @app.errorhandler(401)
 def unauthorized(e):
     return jsonify({"error": "Unauthorized"}), 401
@@ -586,47 +1104,18 @@ def unauthorized(e):
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "Not found"}), 404
-=======
-    upload_dir = os.path.join(os.getcwd(), "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-    path = os.path.join(upload_dir, file.filename)
-    file.save(path)
-
-    return jsonify({
-        "message": "File uploaded successfully",
-        "filename": file.filename
-    }), 201
-
-
-@app.errorhandler(401)
-def unauthorized(e):
-    return jsonify({"error": "Unauthorized"}), 401
-
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({"error": "Not found"}), 404
-
->>>>>>> d0678fe (chore: push all project files to GitHub)
 
 @app.errorhandler(500)
 def server_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
-<<<<<<< HEAD
 @app.errorhandler(413)
 def file_too_large(e):
     return jsonify({"error": "File too large"}), 413
-=======
->>>>>>> d0678fe (chore: push all project files to GitHub)
 
 if __name__ == "__main__":
     print("Starting Loominal Flask API Server 🚀")
     print(f"Auth0 Enabled: {AUTH0_ENABLED}")
-<<<<<<< HEAD
     print(f"Database URL: {DATABASE_URL}")
     print(f"Upload Folder: {UPLOAD_FOLDER}")
     app.run(host="0.0.0.0", port=5000, debug=True)
-=======
-    app.run(host="0.0.0.0", port=5000, debug=True)
->>>>>>> d0678fe (chore: push all project files to GitHub)

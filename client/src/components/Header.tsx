@@ -1,6 +1,5 @@
 // client/src/components/Header.tsx
 "use client";
-<<<<<<< HEAD
 
 import React, { useState } from "react";
 import AuthButton from "./AuthButton";
@@ -9,9 +8,6 @@ import OrganizationCreator from "./OrganizationCreator";
 import OrganizationManager from "./OrganizationManager";
 import { useAuth } from "./AuthProvider";
 import { useOrganization } from "./OrganizationProvider";
-=======
-import AuthButton from "./AuthButton";
->>>>>>> d0678fe (chore: push all project files to GitHub)
 
 export default function Header() {
   const [showCreator, setShowCreator] = useState(false);
@@ -26,7 +22,6 @@ export default function Header() {
   return (
     <header className="w-full bg-gradient-to-r from-primary to-indigo-700 text-white p-4">
       <div className="mx-auto max-w-6xl flex items-center justify-between">
-<<<<<<< HEAD
         {/* Logo and Brand */}
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3">
@@ -77,13 +72,6 @@ export default function Header() {
             </div>
           )}
 
-=======
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center font-bold">L</div>
-          <div className="font-semibold">Loominal</div>
-        </div>
-        <div>
->>>>>>> d0678fe (chore: push all project files to GitHub)
           <AuthButton />
         </div>
       </div>
