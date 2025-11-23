@@ -1,7 +1,7 @@
 // client/src/components/ExportHistory.tsx
 "use client";
-import { useToast } from "./ToastProvider";
-import { useAuth } from "./AuthProvider";
+import { useToast } from "../../hooks/useToast";
+import { useAuth } from "../../hooks/useAuth";
 
 export default function ExportHistory() {
   const toast = useToast();

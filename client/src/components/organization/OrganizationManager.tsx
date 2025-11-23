@@ -2,9 +2,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useOrganization } from "./OrganizationProvider";
-import { useAuth } from "./AuthProvider";
-import { useToast } from "./ToastProvider";
+import { useOrganization } from "../../hooks/useOrganization";
+import { useAuth } from "../../hooks/useAuth";
+import { useToast } from "../../hooks/useToast";
 
 interface Member {
   id: number;

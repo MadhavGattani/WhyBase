@@ -1,32 +1,36 @@
-// client/src/components/AuthProvider.tsx
+// client/src/contexts/AuthContext.tsx
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useEffect, useState, ReactNode } from "react";
 import type { Auth0Client } from "@auth0/auth0-spa-js";
+import { User } from "../types";
 
-type AuthContextType = {
+interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
-  user: any | null;
+  user: User | null;
   login: () => Promise<void>;
   logout: () => void;
   getToken: () => Promise<string | null>;
-};
+}
 
-const AuthContext = createContext<AuthContextType | null>(null);
+export const AuthContext = createContext<AuthContextType | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
   const [client, setClient] = useState<Auth0Client | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
     (async () => {
       try {
-        // Import Auth0 client
         const { createAuth0Client } = await import("@auth0/auth0-spa-js");
 
         const auth0 = await createAuth0Client({
@@ -42,7 +46,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!mounted) return;
         setClient(auth0);
 
-        // Handle redirect callback
         if (
           typeof window !== "undefined" &&
           window.location.search.includes("code=") &&
@@ -56,14 +59,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        // Check authentication status
         const isAuth = await auth0.isAuthenticated();
         if (!mounted) return;
         setIsAuthenticated(isAuth);
 
         if (isAuth) {
           const userData = await auth0.getUser();
-          setUser(userData ?? null);
+          setUser(userData as User ?? null);
         } else {
           setUser(null);
         }
@@ -91,10 +93,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   function logout() {
     if (!client) return;
-    client.logout({ 
-      logoutParams: { 
-        returnTo: window.location.origin 
-      } 
+    client.logout({
+      logoutParams: {
+        returnTo: window.location.origin,
+      },
     });
   }
 
@@ -114,10 +116,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
-  return ctx;
 }

@@ -193,7 +193,7 @@ class Organization(Base):
             "name": self.name,
             "slug": self.slug,
             "description": self.description,
-            "logo_url": self.logo_url,
+            # "logo_url": self.logo_url,
             "website": self.website,
             "is_personal": self.is_personal,
             "is_active": self.is_active,

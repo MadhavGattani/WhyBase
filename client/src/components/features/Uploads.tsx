@@ -1,8 +1,8 @@
 // client/src/components/Upload.tsx
 "use client";
 import { useEffect, useState } from "react";
-import { useToast } from "./ToastProvider";
-import { useAuth } from "./AuthProvider";
+import { useToast } from "../../hooks/useToast";
+import { useAuth } from "../../hooks/useAuth";
 
 type UploadRec = { id: number; filename: string; size?: number; created_at?: string; content_type?: string };
 const DEFAULT_PER_PAGE = 6;

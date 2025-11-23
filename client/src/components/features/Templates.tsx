@@ -1,8 +1,8 @@
 // client/src/components/Templates.tsx
 "use client";
 import { useEffect, useState } from "react";
-import { useToast } from "./ToastProvider";
-import { useAuth } from "./AuthProvider";
+import { useToast } from "../../hooks/useToast";
+import { useAuth } from "../../hooks/useAuth";
 
 type Template = { id: number; name: string; prompt: string; created_at?: string };
 

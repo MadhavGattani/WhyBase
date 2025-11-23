@@ -2,8 +2,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { useAuth } from "./AuthProvider";
-import { useToast } from "./ToastProvider";
+import { useAuth } from "../../hooks/useAuth";
+import { useToast } from "../../hooks/useToast";
 
 interface OrganizationCreatorProps {
   isOpen: boolean;
