@@ -1,5 +1,6 @@
 # server/api/routes/organizations.py
 import os
+import re
 import secrets
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
@@ -10,9 +11,73 @@ from api.db import (
     add_user_to_organization, remove_user_from_organization
 )
 from api.middleware import get_current_user
+from api.utils.validators import validate_email, validate_url
+from api.middleware.rate_limit import rate_limit, rate_limit_strict
+
+
 
 organizations_bp = Blueprint('organizations', __name__)
 AUTH0_ENABLED = os.getenv("AUTH0_ENABLED", "false").lower() == "true"
+
+# ✅ Reserved slugs that cannot be used
+RESERVED_SLUGS = {
+    'admin', 'api', 'auth', 'login', 'logout', 'signup', 'register',
+    'settings', 'dashboard', 'profile', 'user', 'users', 'organization',
+    'organizations', 'org', 'orgs', 'team', 'teams', 'app', 'about',
+    'help', 'support', 'contact', 'terms', 'privacy', 'security'
+}
+
+def validate_slug(slug: str) -> tuple[bool, str]:
+    """
+    Validate organization slug
+    Returns: (is_valid, error_message)
+    """
+    if not slug:
+        return False, "Slug is required"
+    
+    if len(slug) < 3:
+        return False, "Slug must be at least 3 characters"
+    
+    if len(slug) > 50:
+        return False, "Slug must be less than 50 characters"
+    
+    # Only lowercase letters, numbers, and hyphens
+    if not re.match(r'^[a-z0-9-]+$', slug):
+        return False, "Slug can only contain lowercase letters, numbers, and hyphens"
+    
+    # Cannot start or end with hyphen
+    if slug.startswith('-') or slug.endswith('-'):
+        return False, "Slug cannot start or end with a hyphen"
+    
+    # Cannot have consecutive hyphens
+    if '--' in slug:
+        return False, "Slug cannot contain consecutive hyphens"
+    
+    # Check reserved slugs
+    if slug.lower() in RESERVED_SLUGS:
+        return False, f"'{slug}' is a reserved slug and cannot be used"
+    
+    return True, ""
+
+def validate_organization_name(name: str) -> tuple[bool, str]:
+    """
+    Validate organization name
+    Returns: (is_valid, error_message)
+    """
+    if not name:
+        return False, "Name is required"
+    
+    if len(name) < 2:
+        return False, "Name must be at least 2 characters"
+    
+    if len(name) > 100:
+        return False, "Name must be less than 100 characters"
+    
+    # Check for suspicious patterns
+    if name.strip() != name:
+        return False, "Name cannot have leading or trailing whitespace"
+    
+    return True, ""
 
 @organizations_bp.route("/organizations", methods=["GET"])
 def get_organizations():
@@ -51,6 +116,7 @@ def get_organizations():
         return jsonify({"error": str(e)}), 500
 
 @organizations_bp.route("/organizations", methods=["POST"])
+@rate_limit_strict(max_requests=5, window_seconds=60)
 def create_organization():
     """Create a new organization"""
     if AUTH0_ENABLED:
@@ -60,20 +126,43 @@ def create_organization():
     
     data = request.get_json() or {}
 
-    # SAFE handling of possible None values coming from JSON
+    # ✅ Safe handling and validation
     name = (data.get("name") or "").strip()
-    slug = (data.get("slug") or "").strip()
+    slug = (data.get("slug") or "").strip().lower()  # Force lowercase
 
+    # ✅ Validate name
+    name_valid, name_error = validate_organization_name(name)
+    if not name_valid:
+        return jsonify({"error": name_error}), 400
+    
+    # ✅ Validate slug
+    slug_valid, slug_error = validate_slug(slug)
+    if not slug_valid:
+        return jsonify({"error": slug_error}), 400
+
+    # ✅ Safe handling of optional fields
     desc_raw = data.get("description")
-    description = desc_raw.strip() if isinstance(desc_raw, str) else None
+    description = desc_raw.strip() if isinstance(desc_raw, str) and desc_raw else None
+    
+    # ✅ Validate description length
+    if description and len(description) > 500:
+        return jsonify({"error": "Description must be less than 500 characters"}), 400
 
     website_raw = data.get("website")
-    website = website_raw.strip() if isinstance(website_raw, str) else None
+    website = website_raw.strip() if isinstance(website_raw, str) and website_raw else None
+    
+    # ✅ Validate website URL
+    if website:
+        if not re.match(r'^https?://.+', website):
+            return jsonify({"error": "Website must be a valid URL starting with http:// or https://"}), 400
+        if len(website) > 255:
+            return jsonify({"error": "Website URL is too long"}), 400
 
     plan_type = data.get("plan_type", "free")
     
-    if not name or not slug:
-        return jsonify({"error": "Name and slug are required"}), 400
+    # ✅ Validate plan type
+    if plan_type not in ["free", "pro", "enterprise"]:
+        return jsonify({"error": "Invalid plan type"}), 400
     
     session = get_session()
     if not session:
@@ -85,10 +174,11 @@ def create_organization():
             session.close()
             return jsonify({"error": "User not found"}), 404
         
+        # Check if slug already exists
         existing = session.query(Organization).filter(Organization.slug == slug).first()
         if existing:
             session.close()
-            return jsonify({"error": "Slug already taken"}), 400
+            return jsonify({"error": f"Slug '{slug}' is already taken"}), 400
         
         org = Organization(
             name=name,
@@ -315,6 +405,7 @@ def manage_organization_member(org_id, member_id):
         return jsonify({"error": str(e)}), 500
 
 @organizations_bp.route("/organizations/<int:org_id>/invite", methods=["POST"])
+@rate_limit_strict(max_requests=10, window_seconds=60)
 def invite_to_organization(org_id):
     """Invite user to organization"""
     if AUTH0_ENABLED:
@@ -341,6 +432,10 @@ def invite_to_organization(org_id):
 
         email_raw = data.get("email")
         email = email_raw.strip() if isinstance(email_raw, str) else ""
+        email_valid, email_error = validate_email(email)
+        if not email_valid:
+            session.close()
+            return jsonify({"error": email_error}), 400
         role = data.get("role", "member")
         msg_raw = data.get("message")
         message = msg_raw.strip() if isinstance(msg_raw, str) and msg_raw.strip() else None

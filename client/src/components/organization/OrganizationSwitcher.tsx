@@ -1,4 +1,4 @@
-// client/src/components/OrganizationSwitcher.tsx
+// client/src/components/organization/OrganizationSwitcher.tsx
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
@@ -24,6 +24,24 @@ interface OrganizationSwitcherProps {
   onCreateNew: () => void;
 }
 
+// ✅ Cache configuration
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const orgCache = {
+  data: null as Organization[] | null,
+  timestamp: 0,
+  isValid(): boolean {
+    return this.data !== null && Date.now() - this.timestamp < CACHE_DURATION;
+  },
+  set(data: Organization[]): void {
+    this.data = data;
+    this.timestamp = Date.now();
+  },
+  clear(): void {
+    this.data = null;
+    this.timestamp = 0;
+  }
+};
+
 export default function OrganizationSwitcher({
   currentOrganization,
   onOrganizationChange,
@@ -33,6 +51,7 @@ export default function OrganizationSwitcher({
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   const { getToken } = useAuth();
   const toast = useToast();
@@ -40,7 +59,12 @@ export default function OrganizationSwitcher({
 
   useEffect(() => {
     if (isOpen) {
-      fetchOrganizations();
+      // ✅ Check cache first
+      if (orgCache.isValid() && orgCache.data) {
+        setOrganizations(orgCache.data);
+      } else {
+        fetchOrganizations();
+      }
     }
   }, [isOpen]);
 
@@ -55,10 +79,21 @@ export default function OrganizationSwitcher({
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      // ✅ Cleanup abort controller
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
   }, []);
 
   const fetchOrganizations = async () => {
+    // ✅ Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    abortControllerRef.current = new AbortController();
+
     setLoading(true);
     try {
       const headers: any = {};
@@ -67,14 +102,25 @@ export default function OrganizationSwitcher({
         if (token) headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const response = await fetch(`${API}/api/organizations`, { headers });
+      const response = await fetch(`${API}/api/organizations`, { 
+        headers,
+        signal: abortControllerRef.current.signal 
+      });
+      
       if (!response.ok) {
         throw new Error("Failed to fetch organizations");
       }
 
       const data = await response.json();
-      setOrganizations(data.organizations || []);
+      const orgs = data.organizations || [];
+      
+      // ✅ Update cache
+      orgCache.set(orgs);
+      setOrganizations(orgs);
     } catch (error: any) {
+      if (error.name === 'AbortError') {
+        return; // Request was cancelled
+      }
       console.error("Error fetching organizations:", error);
       toast.push("Failed to load organizations", "error");
     } finally {
@@ -85,6 +131,13 @@ export default function OrganizationSwitcher({
   const handleOrganizationSelect = (org: Organization) => {
     onOrganizationChange(org);
     setIsOpen(false);
+  };
+
+  const handleCreateNew = () => {
+    setIsOpen(false);
+    onCreateNew();
+    // ✅ Clear cache when creating new org
+    orgCache.clear();
   };
 
   const getOrganizationIcon = (org: Organization) => {
@@ -242,10 +295,7 @@ export default function OrganizationSwitcher({
 
               {/* Create New Organization Button */}
               <button
-                onClick={() => {
-                  setIsOpen(false);
-                  onCreateNew();
-                }}
+                onClick={handleCreateNew}
                 className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/10 transition-colors text-left"
               >
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-indigo-600 flex items-center justify-center">

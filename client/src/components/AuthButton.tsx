@@ -1,7 +1,7 @@
 // client/src/components/AuthButton.tsx
 "use client";
 import React, { useState } from "react";
-import { useAuth } from "./AuthProvider";
+import { useAuth } from "../hooks/useAuth";  // ✅ Fixed import path
 import LoginModal from "./LoginModal";
 
 export default function AuthButton() {

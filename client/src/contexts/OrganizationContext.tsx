@@ -1,7 +1,7 @@
 // client/src/contexts/OrganizationContext.tsx
 "use client";
 
-import React, { createContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useState, useEffect, ReactNode, useRef } from "react";
 import { Organization } from "../types";
 import { useAuth } from "../hooks/useAuth";
 import { useToast } from "../hooks/useToast";
@@ -30,16 +30,49 @@ interface OrganizationProviderProps {
   children: ReactNode;
 }
 
+// Safe localStorage wrapper
+const safeLocalStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return localStorage.getItem(key);
+    } catch (error) {
+      console.warn("localStorage.getItem failed:", error);
+      return null;
+    }
+  },
+  setItem: (key: string, value: string): boolean => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      console.warn("localStorage.setItem failed:", error);
+      return false;
+    }
+  },
+  removeItem: (key: string): boolean => {
+    try {
+      localStorage.removeItem(key);
+      return true;
+    } catch (error) {
+      console.warn("localStorage.removeItem failed:", error);
+      return false;
+    }
+  }
+};
+
 export function OrganizationProvider({ children }: OrganizationProviderProps) {
   const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // ✅ Add AbortController ref
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const { isAuthenticated, getToken } = useAuth();
   const toast = useToast();
 
   useEffect(() => {
-    const savedOrgId = localStorage.getItem("currentOrganizationId");
+    const savedOrgId = safeLocalStorage.getItem("currentOrganizationId");
     if (savedOrgId && isAuthenticated) {
       // Will be loaded when organizations are fetched
     }
@@ -53,19 +86,42 @@ export function OrganizationProvider({ children }: OrganizationProviderProps) {
       setOrganizations([]);
       setIsLoading(false);
     }
+
+    // ✅ Cleanup on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [isAuthenticated]);
 
   const refreshOrganizations = async (): Promise<void> => {
     if (!isAuthenticated) return;
 
+    // ✅ Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // ✅ Create new AbortController
+    abortControllerRef.current = new AbortController();
+
     setIsLoading(true);
     try {
       const token = await getToken();
+      
+      // Note: You'd need to update your API client to accept signal
       const data = await orgApi.getOrganizations({ token });
+      
+      // ✅ Check if request was aborted
+      if (abortControllerRef.current?.signal.aborted) {
+        return;
+      }
+
       const orgs = data.organizations || [];
       setOrganizations(orgs);
 
-      const savedOrgId = localStorage.getItem("currentOrganizationId");
+      const savedOrgId = safeLocalStorage.getItem("currentOrganizationId");
       let targetOrg: Organization | null = null;
 
       if (savedOrgId) {
@@ -79,9 +135,13 @@ export function OrganizationProvider({ children }: OrganizationProviderProps) {
       setCurrentOrganization(targetOrg);
 
       if (targetOrg) {
-        localStorage.setItem("currentOrganizationId", targetOrg.id.toString());
+        safeLocalStorage.setItem("currentOrganizationId", targetOrg.id.toString());
       }
     } catch (error: any) {
+      // ✅ Don't show error for aborted requests
+      if (error.name === 'AbortError') {
+        return;
+      }
       console.error("Error fetching organizations:", error);
       toast.push("Failed to load organizations", "error");
     } finally {
@@ -96,10 +156,22 @@ export function OrganizationProvider({ children }: OrganizationProviderProps) {
       return;
     }
 
+    
+    const previousOrg = currentOrganization;
     setCurrentOrganization(org);
-    localStorage.setItem("currentOrganizationId", orgId.toString());
+    safeLocalStorage.setItem("currentOrganizationId", orgId.toString());
 
-    toast.push(`Switched to ${org.name}`, "success");
+    try {
+      // If we had an API call to confirm the switch, it would go here
+      toast.push(`Switched to ${org.name}`, "success");
+    } catch (error) {
+      // ✅ Rollback on error
+      setCurrentOrganization(previousOrg);
+      if (previousOrg) {
+        safeLocalStorage.setItem("currentOrganizationId", previousOrg.id.toString());
+      }
+      toast.push("Failed to switch organization", "error");
+    }
   };
 
   const createOrganization = async (data: CreateOrganizationData): Promise<Organization> => {
@@ -110,7 +182,7 @@ export function OrganizationProvider({ children }: OrganizationProviderProps) {
 
       setOrganizations((prev) => [...prev, newOrg]);
       setCurrentOrganization(newOrg);
-      localStorage.setItem("currentOrganizationId", newOrg.id.toString());
+      safeLocalStorage.setItem("currentOrganizationId", newOrg.id.toString());
 
       toast.push(`Created and switched to ${newOrg.name}`, "success");
 

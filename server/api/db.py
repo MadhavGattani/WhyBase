@@ -29,7 +29,7 @@ class InvitationStatus(Enum):
 user_organization_memberships = Table(
     'user_organization_memberships',
     Base.metadata,
-    Column('id', Integer, primary_key=True, autoincrement=True),
+    Column('id', Integer, primary_key=True),
     Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
     Column('organization_id', Integer, ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False),
     Column('role', SQLEnum(OrganizationRole), nullable=False, default=OrganizationRole.MEMBER),
@@ -193,7 +193,7 @@ class Organization(Base):
             "name": self.name,
             "slug": self.slug,
             "description": self.description,
-            # "logo_url": self.logo_url,
+            "logo_url": self.logo_url,
             "website": self.website,
             "is_personal": self.is_personal,
             "is_active": self.is_active,

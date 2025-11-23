@@ -12,6 +12,17 @@ AUTH0_ENABLED = os.getenv("AUTH0_ENABLED", "false").lower() == "true"
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
 
+# ✅ Allowed file extensions
+ALLOWED_EXTENSIONS = {
+    'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 
+    'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'json', 'xml', 'zip'
+}
+
+def allowed_file(filename):
+    """Check if file extension is allowed"""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 @uploads_bp.route("/upload", methods=["POST"])
 def upload_file():
     """Upload a file"""
@@ -31,13 +42,29 @@ def upload_file():
     if not filename:
         return jsonify({"error": "Invalid filename"}), 400
     
+    # ✅ Validate file extension
+    if not allowed_file(filename):
+        return jsonify({"error": "File type not allowed"}), 400
+    
+    # ✅ Validate file size BEFORE saving
+    if request.content_length and request.content_length > MAX_UPLOAD_SIZE:
+        max_mb = MAX_UPLOAD_SIZE / (1024 * 1024)
+        return jsonify({"error": f"File too large. Maximum size is {max_mb}MB"}), 413
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_filename = f"{timestamp}_{filename}"
     filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
     
     try:
+        # ✅ Save with size limit check
         file.save(filepath)
+        
+        # ✅ Double-check file size after save
         file_size = os.path.getsize(filepath)
+        if file_size > MAX_UPLOAD_SIZE:
+            os.remove(filepath)  # Delete if too large
+            max_mb = MAX_UPLOAD_SIZE / (1024 * 1024)
+            return jsonify({"error": f"File too large. Maximum size is {max_mb}MB"}), 413
         
         session = get_session()
         if session:
@@ -70,6 +97,7 @@ def upload_file():
             except Exception as e:
                 session.close()
                 print(f"[DB] Failed to save upload record: {e}")
+                # Don't delete file if DB fails, just continue
         
         return jsonify({
             "message": "File uploaded successfully",
@@ -78,6 +106,12 @@ def upload_file():
         }), 201
         
     except Exception as e:
+        # ✅ Cleanup on error
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except:
+                pass
         return jsonify({"error": str(e)}), 500
 
 @uploads_bp.route("/uploads", methods=["GET"])
