@@ -75,27 +75,58 @@ class User(Base):
 
     def get_role_in_organization(self, org_id):
         """Get user's role in a specific organization"""
+        # Try to get session from object, or create a new one if detached
         session = object_session(self)
+        should_close_session = False
+
         if not session:
+            session = get_session()
+            should_close_session = True
+            if not session:
+                return None
+
+        try:
+            # Check if user is owner by querying the organization
+            org = session.query(Organization).filter(
+                Organization.id == org_id,
+                Organization.owner_id == self.id
+            ).first()
+
+            if org:
+                if should_close_session:
+                    session.close()
+                return OrganizationRole.OWNER
+
+            # Check membership table
+            from sqlalchemy import and_
+            membership = session.query(user_organization_memberships).filter(
+                and_(
+                    user_organization_memberships.c.user_id == self.id,
+                    user_organization_memberships.c.organization_id == org_id,
+                    user_organization_memberships.c.is_active == True
+                )
+            ).first()
+
+            if should_close_session:
+                session.close()
+
+            # membership.role is already an enum from the database
+            if membership:
+                role = membership.role
+                # Handle both enum and string values
+                if isinstance(role, OrganizationRole):
+                    return role
+                elif isinstance(role, str):
+                    return OrganizationRole(role)
+                else:
+                    return role
             return None
-        
-        # Check if user is owner
-        if self.owned_organizations:
-            for org in self.owned_organizations:
-                if org.id == org_id:
-                    return OrganizationRole.OWNER
-        
-        # Check membership table
-        from sqlalchemy import and_
-        membership = session.query(user_organization_memberships).filter(
-            and_(
-                user_organization_memberships.c.user_id == self.id,
-                user_organization_memberships.c.organization_id == org_id,
-                user_organization_memberships.c.is_active == True
-            )
-        ).first()
-        
-        return OrganizationRole(membership.role) if membership else None
+
+        except Exception as e:
+            print(f"[DB] get_role_in_organization error: {e}")
+            if should_close_session:
+                session.close()
+            return None
 
     def get_organizations(self, include_personal=True):
         """Get all organizations user belongs to"""
