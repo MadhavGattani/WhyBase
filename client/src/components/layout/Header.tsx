@@ -24,12 +24,12 @@ export default function Header() {
       <div className="mx-auto max-w-6xl flex items-center justify-between">
         {/* Logo and Brand */}
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
+          <a href="/" className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center font-bold">
               L
             </div>
             <div className="font-semibold">Loominal</div>
-          </div>
+          </a>
 
           {/* Organization Switcher - Only show when authenticated */}
           {isAuthenticated && (
@@ -58,6 +58,22 @@ export default function Header() {
                   </svg>
                 </button>
               )}
+
+              {/* Integrations Link */}
+              <a
+                href="/settings/integrations"
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                title="Integrations"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                  />
+                </svg>
+              </a>
             </div>
           )}
         </div>
@@ -66,7 +82,21 @@ export default function Header() {
         <div className="flex items-center gap-3">
           {/* Mobile Organization Selector */}
           {isAuthenticated && (
-            <div className="md:hidden">
+            <div className="md:hidden flex items-center gap-2">
+              <a
+                href="/settings/integrations"
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                title="Integrations"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                  />
+                </svg>
+              </a>
               <button
                 onClick={() => setShowCreator(true)}
                 className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
