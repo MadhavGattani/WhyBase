@@ -1,4 +1,5 @@
-// client/src/app/page.tsx
+// REPLACE client/src/app/page.tsx with this
+
 "use client";
 
 import { useState } from "react";
@@ -9,7 +10,6 @@ import Uploads from "../components/features/Uploads";
 import ExportHistory from "../components/features/ExportHistory";
 import History from "../components/features/History";
 import { useAuth } from "../hooks/useAuth";
-
 import { useOrganization } from "../hooks/useOrganization";
 import { useToast } from "../hooks/useToast";
 import { queryAI } from "../services/endpoints/queries";
@@ -17,7 +17,10 @@ import { queryAI } from "../services/endpoints/queries";
 export default function Page() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | undefined>(undefined);
+  const [sources, setSources] = useState<any[]>([]);
+  const [contextUsed, setContextUsed] = useState(false);
   const [editorText, setEditorText] = useState<string>("");
+  
   const { getToken } = useAuth();
   const { currentOrganization } = useOrganization();
   const toast = useToast();
@@ -28,15 +31,26 @@ export default function Page() {
       toast.push("Enter a prompt first", "error");
       return;
     }
+    
     setLoading(true);
     setResult(undefined);
+    setSources([]);
+    setContextUsed(false);
+    
     try {
       const token = await getToken();
       const data = await queryAI(q, {
         token,
         organizationId: currentOrganization?.id,
       });
+      
       setResult(data.response);
+      setSources(data.sources || []);
+      setContextUsed(data.context_used || false);
+      
+      if (data.context_used) {
+        toast.push(`Used ${data.sources?.length || 0} sources from GitHub`, "success");
+      }
     } catch (err: any) {
       setResult("Error: " + err.message);
       toast.push("Error querying AI: " + (err.message ?? ""), "error");
@@ -48,7 +62,12 @@ export default function Page() {
   return (
     <main className="mx-auto max-w-4xl mt-8 px-4">
       <Editor value={editorText} onChange={(v) => setEditorText(v)} onRun={handleQuery} />
-      <Results loading={loading} result={result} />
+      <Results 
+        loading={loading} 
+        result={result} 
+        sources={sources}
+        contextUsed={contextUsed}
+      />
       <History />
       <Templates onUse={(prompt) => setEditorText(prompt)} />
       <Uploads />

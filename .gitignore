@@ -7,3 +7,6 @@ server/.env
 .DS_Store
 .vscode
 __pycache__/
+server/venv311/
+venv/
+.env/

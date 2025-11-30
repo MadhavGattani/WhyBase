@@ -9,6 +9,8 @@ from api.routes import register_routes
 
 load_dotenv()
 
+init_db(os.getenv("DATABASE_URL"))
+
 ENV = os.getenv("FLASK_ENV", "production")
 DEBUG = ENV == "development"
 

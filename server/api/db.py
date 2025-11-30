@@ -1,10 +1,11 @@
 # server/api/db.py - Enhanced with Organization System
 import os
 from enum import Enum
-from sqlalchemy import create_engine, Column, Integer, Text, DateTime, String, ForeignKey, func, Boolean, Table
+from sqlalchemy import create_engine, Column, Integer, Text, DateTime, String, ForeignKey, func, Boolean, Table, JSON
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.types import Enum as SQLEnum
+from datetime import datetime
 
 Base = declarative_base()
 engine = None
@@ -281,7 +282,34 @@ class Query(Base):
     # Relationships
     user = relationship("User", back_populates="queries")
     organization = relationship("Organization", back_populates="queries")
+    citations = relationship("Citation", back_populates="query", cascade="all, delete-orphan")
 
+
+class Citation(Base):
+    __tablename__ = "citations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    query_id = Column(Integer, ForeignKey("queries.id", ondelete="CASCADE"), nullable=False)
+    
+    source_type = Column(String(50), nullable=False)
+    source_title = Column(String(512), nullable=False)
+    source_url = Column(String(1024), nullable=False)
+    source_metadata = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, default=func.now())
+    
+    # Relationships
+    query = relationship("Query", back_populates="citations")
+    
+class Embedding(Base):
+    __tablename__ = "embeddings"
+    
+    id = Column(Integer, primary_key=True)
+    content = Column(Text, nullable=False)
+    embedding = Column(Text)  # Will store as string, pgvector handles conversion
+    source_type = Column(String(50), nullable=False)  # 'issue', 'repository'
+    source_id = Column(Integer, nullable=False)
+    source_metadata = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class Template(Base):
     __tablename__ = "templates"

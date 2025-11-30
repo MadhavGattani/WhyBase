@@ -436,3 +436,46 @@ def toggle_repository_sync(repo_id):
     except Exception as e:
         session.close()
         return jsonify({"error": str(e)}), 500
+    
+    
+@integrations_bp.route("/integrations/github/test", methods=["GET"])
+def test_github_data():
+    """Test if GitHub data exists"""
+    if AUTH0_ENABLED:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return jsonify({"error": "Authentication required"}), 401
+    
+    session = get_session()
+    current_user = get_current_user()
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    from api.models.integrations import Integration, Repository, Issue
+    
+    integration = session.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "github"
+    ).first()
+    
+    if not integration:
+        session.close()
+        return jsonify({"error": "No GitHub integration found"})
+    
+    repos = session.query(Repository).filter(
+        Repository.integration_id == integration.id
+    ).count()
+    
+    issues = session.query(Issue).join(Repository).filter(
+        Repository.integration_id == integration.id
+    ).count()
+    
+    session.close()
+    
+    return jsonify({
+        "integration": True,
+        "repositories": repos,
+        "issues": issues,
+        "message": "GitHub data check"
+    })
